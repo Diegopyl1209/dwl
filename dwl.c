@@ -455,6 +455,27 @@ static struct wlr_xwayland *xwayland;
 /* attempt to encapsulate suck into one file */
 #include "client.h"
 
+/* helper functions for code deduplication */
+static void
+focus_surface_with_keyboard(struct wlr_surface *surface, int activate)
+{
+	client_notify_enter(surface, wlr_seat_get_keyboard(seat));
+	if (activate)
+		client_activate_surface(surface, 1);
+}
+
+static Monitor *
+find_monitor_by_index(int index)
+{
+	Monitor *m;
+	int i = 0;
+	wl_list_for_each(m, &mons, link) {
+		if (index == i++)
+			return m;
+	}
+	return NULL;
+}
+
 /* function implementations */
 void
 applybounds(Client *c, struct wlr_box *bbox)
@@ -479,9 +500,8 @@ applyrules(Client *c)
 	/* rule matching */
 	const char *appid, *title;
 	uint32_t newtags = 0;
-	int i;
 	const Rule *r;
-	Monitor *mon = selmon, *m;
+	Monitor *mon = selmon;
 
 	appid = client_get_appid(c);
 	title = client_get_title(c);
@@ -491,10 +511,10 @@ applyrules(Client *c)
 				&& (!r->id || strstr(appid, r->id))) {
 			c->isfloating = r->isfloating;
 			newtags |= r->tags;
-			i = 0;
-			wl_list_for_each(m, &mons, link) {
-				if (r->monitor == i++)
-					mon = m;
+			if (r->monitor >= 0) {
+				Monitor *found = find_monitor_by_index(r->monitor);
+				if (found)
+					mon = found;
 			}
 		}
 	}
@@ -597,7 +617,7 @@ arrangelayers(Monitor *m)
 			/* Deactivate the focused client. */
 			focusclient(NULL, 0);
 			exclusive_focus = l;
-			client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
+			focus_surface_with_keyboard(l->layer_surface->surface, 0);
 			return;
 		}
 	}
@@ -1032,7 +1052,7 @@ createlocksurface(struct wl_listener *listener, void *data)
 	LISTEN(&lock_surface->events.destroy, &m->destroy_lock_surface, destroylocksurface);
 
 	if (m == selmon)
-		client_notify_enter(lock_surface->surface, wlr_seat_get_keyboard(seat));
+		focus_surface_with_keyboard(lock_surface->surface, 0);
 }
 
 void
@@ -1316,7 +1336,7 @@ destroylocksurface(struct wl_listener *listener, void *data)
 
 	if (locked && cur_lock && !wl_list_empty(&cur_lock->surfaces)) {
 		surface = wl_container_of(cur_lock->surfaces.next, surface, link);
-		client_notify_enter(surface->surface, wlr_seat_get_keyboard(seat));
+		focus_surface_with_keyboard(surface->surface, 0);
 	} else if (!locked) {
 		focusclient(focustop(selmon), 1);
 	} else {
@@ -1466,11 +1486,8 @@ focusclient(Client *c, int lift)
 	/* Change cursor surface */
 	motionnotify(0, NULL, 0, 0, 0, 0);
 
-	/* Have a client, so focus its top-level wlr_surface */
-	client_notify_enter(client_surface(c), wlr_seat_get_keyboard(seat));
-
-	/* Activate the new client */
-	client_activate_surface(client_surface(c), 1);
+	/* Focus and activate the client surface */
+	focus_surface_with_keyboard(client_surface(c), 1);
 }
 
 void
@@ -2925,9 +2942,7 @@ updatemons(struct wl_listener *listener, void *data)
 		}
 		focusclient(focustop(selmon), 1);
 		if (selmon->lock_surface) {
-			client_notify_enter(selmon->lock_surface->surface,
-					wlr_seat_get_keyboard(seat));
-			client_activate_surface(selmon->lock_surface->surface, 1);
+			focus_surface_with_keyboard(selmon->lock_surface->surface, 1);
 		}
 	}
 
